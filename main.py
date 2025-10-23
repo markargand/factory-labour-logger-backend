@@ -2,6 +2,7 @@ from fastapi import FastAPI, Depends, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import BaseModel
+from fastapi import FastAPI, Form, HTTPException
 import os, jwt, bcrypt, datetime as dt, psycopg
 
 app = FastAPI()
@@ -138,4 +139,20 @@ def create_entry(body: EntryIn, _: dict = Depends(require_token)):
             (body.employeeId, body.projectId, body.date, body.start, body.end, body.breakMin, body.workType, body.notes, body.hours, body.roundedFromMin, body.roundingMin)
         ).fetchone()
         return {"id": row[0], "createdAt": row[1].isoformat()}
+
+# ✅ TEMPORARY LOGIN ENDPOINT (accepts your admin credentials)
+@app.post("/auth/login")
+def auth_login(username: str = Form(...), password: str = Form(...)):
+    demo_users = {
+        "mark@argand.ie": {"password": "ArgandA3!", "name": "Mark", "role": "admin"},
+    }
+    user = demo_users.get(username)
+    if not user or user["password"] != password:
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+
+    # Return the shape your frontend expects:
+    return {
+        "token": "demo-token",  # placeholder
+        "user": {"email": username, "name": user["name"], "role": user["role"]},
+    }
 
