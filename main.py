@@ -7,7 +7,7 @@ import os, jwt, bcrypt, datetime as dt, psycopg
 app = FastAPI()
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allow any frontend
+    allow_origins=["*"],  # later we can restrict to your Netlify domain
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -18,6 +18,14 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 
 def get_conn():
     return psycopg.connect(DATABASE_URL, autocommit=True)
+
+@app.get("/")
+def root():
+    return {"status": "ok", "app": "factory-labour-logger"}
+
+@app.get("/health")
+def health():
+    return {"status": "ok"}
 
 # ---------- MODELS ----------
 class UserOut(BaseModel):
