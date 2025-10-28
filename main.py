@@ -155,4 +155,3 @@ def auth_login(username: str = Form(...), password: str = Form(...)):
         "token": "demo-token",  # placeholder
         "user": {"email": username, "name": user["name"], "role": user["role"]},
     }
-
