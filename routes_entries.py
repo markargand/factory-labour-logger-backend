@@ -1,22 +1,17 @@
 # routes_entries.py
-# Two endpoints:
+# Two endpoints (no auth for now):
 #  - GET /entries/   -> list entries from Postgres
 #  - POST /entries/  -> upsert (save) a list of entries into Postgres
-#
-# NOTE: You already have login working (/auth/login).
-# We reuse your existing DB session and "current user" dependencies.
-# If the two imports near the top don't match your files, see the lines marked "ADJUST IMPORTS".
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from typing import List
 from sqlalchemy import text
-from database import get_db
-from auth import get_current_user
+from database import get_db  # make sure database.py exists as we created
 
 router = APIRouter(prefix="/entries", tags=["entries"])
 
-# The data shape the frontend sends (matches your UI)
+# Matches your frontend's Entry shape
 class Entry(BaseModel):
     id: str
     employee_id: str
@@ -35,20 +30,14 @@ class Entry(BaseModel):
     created_at: str
 
 @router.get("/", response_model=List[Entry])
-def list_entries(db=Depends(get_db), user=Depends(get_current_user)):
-    """
-    Return all entries (latest first).
-    """
+def list_entries(db=Depends(get_db)):
     rows = db.execute(
-        text("SELECT * FROM entries ORDER BY created_at DESC")
+        text('SELECT * FROM entries ORDER BY created_at DESC')
     ).mappings().all()
     return [dict(r) for r in rows]
 
 @router.post("/", status_code=204)
-def upsert_entries(payload: List[Entry], db=Depends(get_db), user=Depends(get_current_user)):
-    """
-    Upsert (insert or update) multiple entries in one go.
-    """
+def upsert_entries(payload: List[Entry], db=Depends(get_db)):
     for e in payload:
         db.execute(text("""
             INSERT INTO entries(
