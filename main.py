@@ -1,6 +1,7 @@
 # main.py — minimal, known-good FastAPI with temp login
 from fastapi import FastAPI, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from routes_entries import router as entries_router
 
 app = FastAPI(title="Factory Labour Logger API")
 
@@ -12,6 +13,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.include_router(entries_router)
 
 @app.get("/")
 def root():
