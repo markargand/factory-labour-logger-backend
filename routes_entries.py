@@ -11,20 +11,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from typing import List
 from sqlalchemy import text
-
-# ---------- ADJUST IMPORTS ----------
-# Try option A first (works for many setups):
-try:
-    from deps import get_db, get_current_user  # <- If you have deps.py
-except ModuleNotFoundError:
-    # Option B: your project might use database.py and auth.py
-    try:
-        from database import get_db  # provides a DB session (SessionLocal)
-        from auth import get_current_user  # validates JWT and returns the user
-    except ModuleNotFoundError:
-        # Option C: if you have app/deps.py (inside a folder named app)
-        from app.deps import get_db, get_current_user
-# -----------------------------------
+from database import get_db
+from auth import get_current_user
 
 router = APIRouter(prefix="/entries", tags=["entries"])
 
