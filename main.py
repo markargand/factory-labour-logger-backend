@@ -2,6 +2,8 @@
 from fastapi import FastAPI, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from routes_entries import router as entries_router
+from routes_employees import router as employees_router
+from routes_projects import router as projects_router
 
 app = FastAPI(title="Factory Labour Logger API")
 
@@ -15,6 +17,8 @@ app.add_middleware(
 )
 
 app.include_router(entries_router)
+app.include_router(employees_router)
+app.include_router(projects_router)
 
 @app.get("/")
 def root():
