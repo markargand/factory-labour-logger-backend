@@ -17,6 +17,11 @@ from collections import defaultdict
 
 from database import get_db  # uses your existing database.py
 
+# NEW imports for XLSX and PDF
+from openpyxl import Workbook
+from reportlab.pdfgen import canvas
+from reportlab.lib.pagesizes import A4
+
 router = APIRouter(prefix="/export", tags=["export"])
 
 
@@ -83,7 +88,6 @@ def fetch_entries(db: Session, week: str | None, date_from: str | None, date_to:
     return rows
 
 
-
 @router.get("/xlsx")
 def export_xlsx(
     week: str | None = Query(None, description="ISO week like 2025-W47"),
@@ -91,7 +95,6 @@ def export_xlsx(
     date_to: str | None = Query(None, description="End date YYYY-MM-DD"),
     db: Session = Depends(get_db),
 ):
-    ...
     rows = fetch_entries(db, week, date_from, date_to)
 
     wb = Workbook()
@@ -136,7 +139,7 @@ def export_xlsx(
         name = r.get("employee_name") or r.get("employee_id")
         emp_totals[name]["hours"] += hrs
         emp_totals[name]["cost"] += cost
-    
+
     ws_emp = wb.create_sheet(title="By employee")
     ws_emp.append(["Employee", "Total hours", "Total cost"])
     for name, data in sorted(emp_totals.items()):
@@ -149,11 +152,11 @@ def export_xlsx(
         rate = float(r.get("hourly_rate") or 0)
         cost = hrs * rate
         code = r.get("project_code") or ""
-        name = r.get("project_name") or ""
-        key = f"{code} {name}".strip()
+        pname = r.get("project_name") or ""
+        key = f"{code} {pname}".strip()
         proj_totals[key]["hours"] += hrs
         proj_totals[key]["cost"] += cost
-    
+
     ws_proj = wb.create_sheet(title="By project")
     ws_proj.append(["Project", "Total hours", "Total cost"])
     for key, data in sorted(proj_totals.items()):
@@ -167,9 +170,7 @@ def export_xlsx(
     filename_week = week or "all"
     return StreamingResponse(
         buffer,
-        media_type=(
-            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        ),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={
             "Content-Disposition": f'attachment; filename="labour-report-{filename_week}.xlsx"'
         },
@@ -183,29 +184,30 @@ def export_pdf(
     date_to: str | None = Query(None, description="End date YYYY-MM-DD"),
     db: Session = Depends(get_db),
 ):
-    ...
     rows = fetch_entries(db, week, date_from, date_to)
 
-emp_totals = defaultdict(lambda: {"hours": 0.0, "cost": 0.0})
-proj_totals = defaultdict(lambda: {"hours": 0.0, "cost": 0.0})
+    # Build totals
+    emp_totals = defaultdict(lambda: {"hours": 0.0, "cost": 0.0})
+    proj_totals = defaultdict(lambda: {"hours": 0.0, "cost": 0.0})
 
-for r in rows:
-    hrs = float(r.get("hours") or 0)
-    rate = float(r.get("hourly_rate") or 0)
-    cost = hrs * rate
+    for r in rows:
+        hrs = float(r.get("hours") or 0)
+        rate = float(r.get("hourly_rate") or 0)
+        cost = hrs * rate
 
-    # Employee key
-    ename = r.get("employee_name") or r.get("employee_id")
-    emp_totals[ename]["hours"] += hrs
-    emp_totals[ename]["cost"] += cost
+        # Employee key
+        ename = r.get("employee_name") or r.get("employee_id")
+        emp_totals[ename]["hours"] += hrs
+        emp_totals[ename]["cost"] += cost
 
-    # Project key
-    code = r.get("project_code") or ""
-    pname = r.get("project_name") or ""
-    pkey = f"{code} {pname}".strip()
-    proj_totals[pkey]["hours"] += hrs
-    proj_totals[pkey]["cost"] += cost
+        # Project key
+        code = r.get("project_code") or ""
+        pname = r.get("project_name") or ""
+        pkey = f"{code} {pname}".strip()
+        proj_totals[pkey]["hours"] += hrs
+        proj_totals[pkey]["cost"] += cost
 
+    # Create PDF
     buffer = BytesIO()
     c = canvas.Canvas(buffer, pagesize=A4)
     width, height = A4
@@ -214,37 +216,57 @@ for r in rows:
     c.setFont("Helvetica-Bold", 16)
     c.drawString(40, height - 40, title)
 
+    # Optional week/date info
+    c.setFont("Helvetica", 10)
+    info_line = ""
     if week:
-        c.setFont("Helvetica", 10)
-        c.drawString(40, height - 60, f"Week: {week}")
+        info_line = f"Week: {week}"
+    elif date_from or date_to:
+        info_line = f"Range: {date_from or '...'} to {date_to or '...'}"
+    if info_line:
+        c.drawString(40, height - 60, info_line)
 
     y = height - 90
+
+    # By employee
     c.setFont("Helvetica-Bold", 12)
     c.drawString(40, y, "By employee")
     y -= 20
     c.setFont("Helvetica", 10)
+
     for name, data in sorted(emp_totals.items()):
         hours = data["hours"]
         cost = data["cost"]
-        ...
-        c.drawString(50, y, f"{name}: {hours:.2f} h  (€{cost:.2f})")
+        line = f"{name}: {hours:.2f} h  (€{cost:.2f})"
+        c.drawString(50, y, line)
         y -= 15
+        if y < 60:
+            c.showPage()
+            y = height - 40
+            c.setFont("Helvetica", 10)
 
+    # Space before next section
     y -= 15
     if y < 60:
         c.showPage()
         y = height - 40
 
+    # By project
     c.setFont("Helvetica-Bold", 12)
     c.drawString(40, y, "By project")
     y -= 20
     c.setFont("Helvetica", 10)
+
     for key, data in sorted(proj_totals.items()):
         hours = data["hours"]
         cost = data["cost"]
-        ...
-        c.drawString(50, y, f"{key}: {hours:.2f} h  (€{cost:.2f})")
+        line = f"{key}: {hours:.2f} h  (€{cost:.2f})"
+        c.drawString(50, y, line)
         y -= 15
+        if y < 60:
+            c.showPage()
+            y = height - 40
+            c.setFont("Helvetica", 10)
 
     c.showPage()
     c.save()
