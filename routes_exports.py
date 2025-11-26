@@ -36,26 +36,44 @@ def iso_week_range(week_id: str):
         return None, None
 
 
-def fetch_entries(db: Session, week: str | None):
+def fetch_entries(db: Session, week: str | None, date_from: str | None, date_to: str | None):
     """
     Fetch entries joined with employees & projects.
-    If week is provided (e.g., '2025-W47'), filter by that ISO week.
+    Priority:
+      1) If date_from/date_to provided -> use that range
+      2) Else if week provided -> use that ISO week
+      3) Else -> all entries
     """
     params = {}
-    where = ""
-    if week:
+    conditions = []
+
+    # 1) Date range from query
+    if date_from:
+        conditions.append("e.date >= :from")
+        params["from"] = date_from
+    if date_to:
+        conditions.append("e.date <= :to")
+        params["to"] = date_to
+
+    # 2) If no explicit date range, but week is given
+    if not conditions and week:
         start_date, end_date = iso_week_range(week)
         if start_date and end_date:
-            where = "WHERE e.date BETWEEN :start AND :end"
+            conditions.append("e.date BETWEEN :start AND :end")
             params["start"] = start_date
             params["end"] = end_date
+
+    where = ""
+    if conditions:
+        where = "WHERE " + " AND ".join(conditions)
 
     rows = db.execute(text(f"""
         SELECT
           e.*,
-          emp.name  AS employee_name,
-          proj.code AS project_code,
-          proj.name AS project_name
+          emp.name        AS employee_name,
+          emp.hourly_rate AS hourly_rate,
+          proj.code       AS project_code,
+          proj.name       AS project_name
         FROM entries e
         LEFT JOIN employees emp ON e.employee_id = emp.id
         LEFT JOIN projects proj ON e.project_id  = proj.id
@@ -65,20 +83,16 @@ def fetch_entries(db: Session, week: str | None):
     return rows
 
 
+
 @router.get("/xlsx")
 def export_xlsx(
     week: str | None = Query(None, description="ISO week like 2025-W47"),
+    date_from: str | None = Query(None, description="Start date YYYY-MM-DD"),
+    date_to: str | None = Query(None, description="End date YYYY-MM-DD"),
     db: Session = Depends(get_db),
 ):
-    """
-    Generate an Excel workbook with:
-      - Entries     (one row per entry)
-      - By employee (total hours)
-      - By project  (total hours)
-    """
-    from openpyxl import Workbook
-
-    rows = fetch_entries(db, week)
+    ...
+    rows = fetch_entries(db, week, date_from, date_to)
 
     wb = Workbook()
     ws_entries = wb.active
@@ -88,11 +102,15 @@ def export_xlsx(
     headers = [
         "Date", "Employee", "Project Code", "Project Name",
         "Work Type", "Start", "End", "Break (min)",
-        "Hours", "Status", "Locked"
+        "Hours", "Hourly rate", "Cost",
+        "Status", "Locked"
     ]
     ws_entries.append(headers)
 
     for r in rows:
+        hrs = r.get("hours") or 0
+        rate = r.get("hourly_rate") or 0
+        cost = float(hrs) * float(rate)
         ws_entries.append([
             r["date"],
             r.get("employee_name"),
@@ -102,36 +120,44 @@ def export_xlsx(
             r.get("start"),
             r.get("end"),
             r.get("break_min"),
-            r.get("hours"),
+            hrs,
+            rate,
+            cost,
             r.get("status"),
             "Yes" if r.get("locked") else "No",
         ])
 
     # Sheet 2: By employee
-    emp_totals = defaultdict(float)
+    emp_totals = defaultdict(lambda: {"hours": 0.0, "cost": 0.0})
     for r in rows:
-        hrs = r.get("hours") or 0
+        hrs = float(r.get("hours") or 0)
+        rate = float(r.get("hourly_rate") or 0)
+        cost = hrs * rate
         name = r.get("employee_name") or r.get("employee_id")
-        emp_totals[name] += hrs
-
+        emp_totals[name]["hours"] += hrs
+        emp_totals[name]["cost"] += cost
+    
     ws_emp = wb.create_sheet(title="By employee")
-    ws_emp.append(["Employee", "Total hours"])
-    for name, hours in sorted(emp_totals.items()):
-        ws_emp.append([name, float(hours)])
+    ws_emp.append(["Employee", "Total hours", "Total cost"])
+    for name, data in sorted(emp_totals.items()):
+        ws_emp.append([name, data["hours"], data["cost"]])
 
     # Sheet 3: By project
-    proj_totals = defaultdict(float)
+    proj_totals = defaultdict(lambda: {"hours": 0.0, "cost": 0.0})
     for r in rows:
-        hrs = r.get("hours") or 0
+        hrs = float(r.get("hours") or 0)
+        rate = float(r.get("hourly_rate") or 0)
+        cost = hrs * rate
         code = r.get("project_code") or ""
         name = r.get("project_name") or ""
         key = f"{code} {name}".strip()
-        proj_totals[key] += hrs
-
+        proj_totals[key]["hours"] += hrs
+        proj_totals[key]["cost"] += cost
+    
     ws_proj = wb.create_sheet(title="By project")
-    ws_proj.append(["Project", "Total hours"])
-    for key, hours in sorted(proj_totals.items()):
-        ws_proj.append([key, float(hours)])
+    ws_proj.append(["Project", "Total hours", "Total cost"])
+    for key, data in sorted(proj_totals.items()):
+        ws_proj.append([key, data["hours"], data["cost"]])
 
     # Write workbook to bytes
     buffer = BytesIO()
@@ -153,32 +179,32 @@ def export_xlsx(
 @router.get("/pdf")
 def export_pdf(
     week: str | None = Query(None, description="ISO week like 2025-W47"),
+    date_from: str | None = Query(None, description="Start date YYYY-MM-DD"),
+    date_to: str | None = Query(None, description="End date YYYY-MM-DD"),
     db: Session = Depends(get_db),
 ):
-    """
-    Generate a simple PDF summary:
-      - Totals by employee
-      - Totals by project
-    """
-    from reportlab.lib.pagesizes import A4
-    from reportlab.pdfgen import canvas
+    ...
+    rows = fetch_entries(db, week, date_from, date_to)
 
-    rows = fetch_entries(db, week)
+emp_totals = defaultdict(lambda: {"hours": 0.0, "cost": 0.0})
+proj_totals = defaultdict(lambda: {"hours": 0.0, "cost": 0.0})
 
-    emp_totals = defaultdict(float)
-    proj_totals = defaultdict(float)
+for r in rows:
+    hrs = float(r.get("hours") or 0)
+    rate = float(r.get("hourly_rate") or 0)
+    cost = hrs * rate
 
-    for r in rows:
-        hrs = r.get("hours") or 0
-        # Employee key
-        ename = r.get("employee_name") or r.get("employee_id")
-        emp_totals[ename] += hrs
+    # Employee key
+    ename = r.get("employee_name") or r.get("employee_id")
+    emp_totals[ename]["hours"] += hrs
+    emp_totals[ename]["cost"] += cost
 
-        # Project key
-        code = r.get("project_code") or ""
-        pname = r.get("project_name") or ""
-        pkey = f"{code} {pname}".strip()
-        proj_totals[pkey] += hrs
+    # Project key
+    code = r.get("project_code") or ""
+    pname = r.get("project_name") or ""
+    pkey = f"{code} {pname}".strip()
+    proj_totals[pkey]["hours"] += hrs
+    proj_totals[pkey]["cost"] += cost
 
     buffer = BytesIO()
     c = canvas.Canvas(buffer, pagesize=A4)
@@ -197,11 +223,11 @@ def export_pdf(
     c.drawString(40, y, "By employee")
     y -= 20
     c.setFont("Helvetica", 10)
-    for name, hours in sorted(emp_totals.items()):
-        if y < 60:
-            c.showPage()
-            y = height - 40
-        c.drawString(50, y, f"{name}: {hours:.2f} h")
+    for name, data in sorted(emp_totals.items()):
+        hours = data["hours"]
+        cost = data["cost"]
+        ...
+        c.drawString(50, y, f"{name}: {hours:.2f} h  (€{cost:.2f})")
         y -= 15
 
     y -= 15
@@ -213,11 +239,11 @@ def export_pdf(
     c.drawString(40, y, "By project")
     y -= 20
     c.setFont("Helvetica", 10)
-    for key, hours in sorted(proj_totals.items()):
-        if y < 60:
-            c.showPage()
-            y = height - 40
-        c.drawString(50, y, f"{key}: {hours:.2f} h")
+    for key, data in sorted(proj_totals.items()):
+        hours = data["hours"]
+        cost = data["cost"]
+        ...
+        c.drawString(50, y, f"{key}: {hours:.2f} h  (€{cost:.2f})")
         y -= 15
 
     c.showPage()
